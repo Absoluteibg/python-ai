@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: nova-voice-assistant
+    runtime: python
+    plan: free
+    branch: Sub-1
+    buildCommand: pip install -r requirements.txt
+    startCommand: WEB_CONCURRENCY=1 THREADS=2 gunicorn -c gunicorn_conf.py app:app
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.11
+      - key: LOG_LEVEL
+        value: INFO
