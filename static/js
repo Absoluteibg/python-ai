@@ -1,1 +1,379 @@
+(() => {
+  "use strict";
 
+  // ------------------------------------------------------------------
+  // DOM refs
+  // ------------------------------------------------------------------
+  const micBtn = document.getElementById("micBtn");
+  const statusText = document.getElementById("statusText");
+  const logEl = document.getElementById("log");
+  const logEmpty = document.getElementById("logEmpty");
+  const chipsEl = document.getElementById("chips");
+  const textInput = document.getElementById("textInput");
+  const sendBtn = document.getElementById("sendBtn");
+  const voiceOutSwitch = document.getElementById("voiceOutSwitch");
+  const themeBtn = document.getElementById("themeBtn");
+  const statusDot = document.getElementById("statusDot");
+  const statusLabel = document.getElementById("statusLabel");
+  const toastStack = document.getElementById("toastStack");
+  const clearBtn = document.getElementById("clearBtn");
+  const statReqs = document.getElementById("statReqs");
+  const statCache = document.getElementById("statCache");
+  const canvas = document.getElementById("visualizer");
+  const ctx = canvas.getContext("2d");
+
+  const state = {
+    listening: false,
+    speaking: false,
+    voiceOutputEnabled: true,
+    entries: 0,
+  };
+
+  // ------------------------------------------------------------------
+  // Theme toggle (session-only, no persistence needed for a demo run)
+  // ------------------------------------------------------------------
+  themeBtn.addEventListener("click", () => {
+    const root = document.documentElement;
+    const isLight = root.getAttribute("data-theme") === "light";
+    root.setAttribute("data-theme", isLight ? "dark" : "light");
+  });
+
+  // ------------------------------------------------------------------
+  // Toasts
+  // ------------------------------------------------------------------
+  function toast(message, kind = "info") {
+    const el = document.createElement("div");
+    el.className = `toast ${kind === "info" ? "" : kind}`;
+    el.textContent = message;
+    toastStack.appendChild(el);
+    setTimeout(() => {
+      el.classList.add("leaving");
+      setTimeout(() => el.remove(), 260);
+    }, 3200);
+  }
+
+  // ------------------------------------------------------------------
+  // Conversation log
+  // ------------------------------------------------------------------
+  function addEntry(tag, text, { error = false, time = new Date() } = {}) {
+    if (logEmpty) logEmpty.style.display = "none";
+    const row = document.createElement("div");
+    row.className = `entry${error ? " error" : ""}`;
+    const timeStr = time.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    row.innerHTML = `
+      <div class="entry-row">
+        <span class="entry-tag ${tag === "You" ? "user" : "nova"}">${tag}</span>
+        <span class="entry-time">${timeStr}</span>
+      </div>
+      <div class="entry-text"></div>
+    `;
+    row.querySelector(".entry-text").textContent = text;
+    logEl.appendChild(row);
+    logEl.scrollTop = logEl.scrollHeight;
+    state.entries += 1;
+  }
+
+  clearBtn.addEventListener("click", () => {
+    logEl.innerHTML = "";
+    if (logEmpty) {
+      logEl.appendChild(logEmpty);
+      logEmpty.style.display = "flex";
+    }
+    state.entries = 0;
+  });
+
+  // ------------------------------------------------------------------
+  // Text-to-speech (makes the assistant actually feel like an assistant)
+  // ------------------------------------------------------------------
+  function speak(text) {
+    if (!state.voiceOutputEnabled || !("speechSynthesis" in window)) return;
+    window.speechSynthesis.cancel();
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.rate = 1.02;
+    utter.pitch = 1.0;
+    utter.onstart = () => {
+      state.speaking = true;
+      micBtn.classList.add("speaking");
+    };
+    utter.onend = () => {
+      state.speaking = false;
+      micBtn.classList.remove("speaking");
+    };
+    window.speechSynthesis.speak(utter);
+  }
+
+  voiceOutSwitch.addEventListener("click", () => {
+    state.voiceOutputEnabled = !state.voiceOutputEnabled;
+    voiceOutSwitch.classList.toggle("on", state.voiceOutputEnabled);
+    if (!state.voiceOutputEnabled) window.speechSynthesis?.cancel();
+  });
+  voiceOutSwitch.classList.add("on");
+
+  // ------------------------------------------------------------------
+  // Command dispatch — shared by voice + typed input
+  // ------------------------------------------------------------------
+  async function runCommand(commandText) {
+    if (!commandText || !commandText.trim()) return;
+    addEntry("You", commandText);
+    statusText.textContent = "Thinking...";
+
+    let timezone;
+    try { timezone = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { /* noop */ }
+
+    try {
+      const res = await fetch("/agent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ command: commandText, timezone }),
+      });
+
+      if (res.status === 429) {
+        const retryAfter = res.headers.get("Retry-After") || "a few";
+        toast(`Slow down a bit — try again in ${retryAfter}s.`, "warn");
+        statusText.textContent = "Rate limited";
+        return;
+      }
+
+      const data = await res.json();
+
+      if (!data.success) {
+        addEntry("Nova", data.message || "I couldn't do that.", { error: true });
+        statusText.textContent = "Ready";
+        return;
+      }
+
+      addEntry("Nova", data.message);
+      speak(data.message);
+
+      if (data.type === "open" && data.url) {
+        statusText.textContent = data.message || "Opening...";
+        setTimeout(() => window.open(data.url, "_blank"), 500);
+      } else {
+        statusText.textContent = "Ready";
+      }
+      refreshMetrics();
+    } catch (err) {
+      addEntry("Nova", "Connection error — is the server running?", { error: true });
+      toast("Couldn't reach the server.", "error");
+      statusText.textContent = "Connection error";
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Text input fallback (works even without mic / speech recognition)
+  // ------------------------------------------------------------------
+  sendBtn.addEventListener("click", () => {
+    const val = textInput.value;
+    textInput.value = "";
+    runCommand(val);
+  });
+  textInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      const val = textInput.value;
+      textInput.value = "";
+      runCommand(val);
+    }
+  });
+
+  // ------------------------------------------------------------------
+  // Suggested command chips — fetched from the backend so the UI never
+  // drifts out of sync with what the router actually supports
+  // ------------------------------------------------------------------
+  async function loadChips() {
+    try {
+      const res = await fetch("/api/commands");
+      const data = await res.json();
+      chipsEl.innerHTML = "";
+      (data.commands || []).slice(0, 8).forEach((c, i) => {
+        const chip = document.createElement("div");
+        chip.className = "chip";
+        chip.textContent = c.example;
+        chip.title = c.description;
+        chip.style.animationDelay = `${i * 45}ms`;
+        chip.addEventListener("click", () => runCommand(c.example));
+        chipsEl.appendChild(chip);
+      });
+    } catch {
+      /* chips are a nicety, fail silently */
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Backend health polling — live status dot + footer stats
+  // ------------------------------------------------------------------
+  async function refreshHealth() {
+    try {
+      const res = await fetch("/health");
+      if (!res.ok) throw new Error("bad status");
+      statusDot.className = "status-dot online";
+      statusLabel.textContent = "Online";
+    } catch {
+      statusDot.className = "status-dot offline";
+      statusLabel.textContent = "Offline";
+    }
+  }
+
+  async function refreshMetrics() {
+    try {
+      const res = await fetch("/metrics");
+      const data = await res.json();
+      if (statReqs) statReqs.textContent = data.requests_total ?? "—";
+      if (statCache && data.youtube_cache) {
+        statCache.textContent = `${Math.round((data.youtube_cache.hit_rate || 0) * 100)}%`;
+      }
+    } catch { /* non-critical */ }
+  }
+
+  refreshHealth();
+  refreshMetrics();
+  setInterval(refreshHealth, 15000);
+  setInterval(refreshMetrics, 15000);
+  loadChips();
+
+  // ------------------------------------------------------------------
+  // Real audio visualizer — actual mic amplitude via Web Audio API,
+  // not a canned CSS loop. Falls back gracefully if mic access fails.
+  // ------------------------------------------------------------------
+  let audioCtx, analyser, dataArray, source, rafId;
+
+  function resizeCanvas() {
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = 176 * dpr;
+    canvas.height = 176 * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  resizeCanvas();
+
+  function drawIdle() {
+    ctx.clearRect(0, 0, 176, 176);
+  }
+
+  function drawFrame() {
+    if (!analyser) return;
+    analyser.getByteFrequencyData(dataArray);
+    ctx.clearRect(0, 0, 176, 176);
+
+    const cx = 88, cy = 88;
+    const bars = 48;
+    const radius = 58;
+    const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#6d6bf9";
+
+    for (let i = 0; i < bars; i++) {
+      const idx = Math.floor((i / bars) * dataArray.length * 0.7);
+      const amp = dataArray[idx] / 255;
+      const len = 4 + amp * 22;
+      const angle = (i / bars) * Math.PI * 2;
+      const x1 = cx + Math.cos(angle) * radius;
+      const y1 = cy + Math.sin(angle) * radius;
+      const x2 = cx + Math.cos(angle) * (radius + len);
+      const y2 = cy + Math.sin(angle) * (radius + len);
+      ctx.strokeStyle = accent;
+      ctx.globalAlpha = 0.35 + amp * 0.65;
+      ctx.lineWidth = 2.5;
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    rafId = requestAnimationFrame(drawFrame);
+  }
+
+  async function startVisualizer() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 128;
+      dataArray = new Uint8Array(analyser.frequencyBinCount);
+      source = audioCtx.createMediaStreamSource(stream);
+      source.connect(analyser);
+      drawFrame();
+      startVisualizer._stream = stream;
+    } catch {
+      // Mic permission denied or unavailable — visualizer just stays idle,
+      // recognition itself will surface a clearer error.
+    }
+  }
+
+  function stopVisualizer() {
+    if (rafId) cancelAnimationFrame(rafId);
+    rafId = null;
+    if (startVisualizer._stream) {
+      startVisualizer._stream.getTracks().forEach((t) => t.stop());
+      startVisualizer._stream = null;
+    }
+    if (audioCtx) { audioCtx.close(); audioCtx = null; }
+    drawIdle();
+  }
+
+  // ------------------------------------------------------------------
+  // Speech recognition
+  // ------------------------------------------------------------------
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let recognition = null;
+  let recognitionSupported = Boolean(SpeechRecognition);
+
+  if (!recognitionSupported) {
+    statusText.textContent = "Voice input unsupported — type instead";
+    micBtn.disabled = true;
+    micBtn.style.opacity = "0.4";
+    micBtn.style.cursor = "not-allowed";
+  } else {
+    recognition = new SpeechRecognition();
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.lang = "en-US";
+
+    recognition.onstart = () => {
+      state.listening = true;
+      micBtn.classList.add("listening");
+      statusText.textContent = "Listening...";
+      startVisualizer();
+    };
+
+    recognition.onresult = (event) => {
+      const text = event.results[0][0].transcript;
+      runCommand(text);
+    };
+
+    recognition.onerror = (event) => {
+      const messages = {
+        "not-allowed": "Microphone access denied.",
+        "no-speech": "Didn't catch that — try again.",
+        "audio-capture": "No microphone found.",
+      };
+      toast(messages[event.error] || "Voice recognition error.", "error");
+      statusText.textContent = "Ready";
+    };
+
+    recognition.onend = () => {
+      state.listening = false;
+      micBtn.classList.remove("listening");
+      stopVisualizer();
+      if (statusText.textContent === "Listening...") statusText.textContent = "Ready";
+    };
+
+    micBtn.addEventListener("click", () => {
+      if (state.listening) {
+        recognition.stop();
+        return;
+      }
+      try {
+        recognition.start();
+      } catch {
+        /* already running */
+      }
+    });
+
+    // Push-to-talk: hold spacebar (ignored while typing in the input)
+    window.addEventListener("keydown", (e) => {
+      if (e.code === "Space" && document.activeElement !== textInput && !state.listening) {
+        e.preventDefault();
+        micBtn.click();
+      }
+    });
+  }
+})();
+    
