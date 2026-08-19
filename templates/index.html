@@ -1,1 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nova — Voice Assistant</title>
+  <meta name="description" content="Nova, a voice-driven action assistant.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;650;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body data-theme="dark">
+  <div class="backdrop"></div>
+
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark">N</div>
+        <span class="brand-name">Nova</span>
+      </div>
+      <div class="topbar-right">
+        <div class="status-pill">
+          <span id="statusDot" class="status-dot"></span>
+          <span id="statusLabel">Checking...</span>
+        </div>
+        <button id="themeBtn" class="icon-btn" title="Toggle theme" aria-label="Toggle theme">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.4 5.4 0 0 1-7.54-7.54c-.44-.06-.9-.1-1.36-.1z"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <main class="main-grid">
+      <section class="panel voice-panel">
+        <div class="eyebrow">Voice Assistant</div>
+        <h1>Talk to Nova</h1>
+        <p class="subtitle">Tap the mic, or hold <kbd>Space</kbd>, and speak naturally.</p>
+
+        <div class="orb-wrap">
+          <canvas id="visualizer" width="176" height="176"></canvas>
+          <button id="micBtn" class="mic-btn" title="Click to speak" aria-label="Start voice command">
+            <svg viewBox="0 0 24 24">
+              <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.49 6-3.31 6-6.72h-1.7z"/>
+            </svg>
+          </button>
+        </div>
+
+        <p id="statusText" class="mic-hint">Ready</p>
+
+        <div class="type-row">
+          <input id="textInput" type="text" placeholder="Or type a command…" autocomplete="off">
+          <button id="sendBtn" class="send-btn" aria-label="Send command">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4 20-7z"/>
+            </svg>
+          </button>
+        </div>
+
+        <div class="voice-toggle-row">
+          <span>Speak replies aloud</span>
+          <div id="voiceOutSwitch" class="switch" role="switch" aria-label="Toggle spoken replies"></div>
+        </div>
+      </section>
+
+      <section class="panel activity-panel">
+        <div class="activity-header">
+          <h2>Conversation</h2>
+          <button id="clearBtn" class="clear-btn">Clear</button>
+        </div>
+
+        <div id="log" class="log">
+          <div id="logEmpty" class="log-empty">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
+            </svg>
+            <span>Nothing yet — try a command to get started.</span>
+          </div>
+        </div>
+
+        <div class="chips-section">
+          <h3>Try saying</h3>
+          <div id="chips" class="chips"></div>
+        </div>
+      </section>
+    </main>
+
+    <div class="footer-stats">
+      <span>requests handled: <b id="statReqs">—</b></span>
+      <span>youtube cache hit rate: <b id="statCache">—</b></span>
+    </div>
+  </div>
+
+  <div id="toastStack" class="toast-stack"></div>
+
+  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
 
